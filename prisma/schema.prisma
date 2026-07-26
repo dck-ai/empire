@@ -1,0 +1,134 @@
+
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ReservationSession {
+  LUNCH
+  DINNER
+  WAITING
+}
+
+enum MealPeriod {
+  LUNCH
+  DINNER
+}
+
+model Reservation {
+  id            String              @id @default(uuid()) @db.Uuid
+  sheetRowId    Int                 @unique @map("sheet_row_id")
+  serviceDate   DateTime            @map("service_date") @db.Date
+  serviceTime   String              @default("") @map("service_time")
+  session       ReservationSession
+  mealPeriod    MealPeriod?         @map("meal_period")
+  hall          String
+  customerName  String              @map("customer_name")
+  pax           Int?
+  phone         String              @default("")
+  managerReview String              @default("") @map("manager_review")
+  syncedAt      DateTime            @map("synced_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  ops ReservationOps?
+
+  @@index([serviceDate])
+  @@index([serviceDate, session, mealPeriod])
+  @@map("reservations")
+}
+
+model ReservationOps {
+  id                     String   @id @default(uuid()) @db.Uuid
+  reservationId          String   @unique @map("reservation_id") @db.Uuid
+  arrival                Boolean  @default(false)
+  finished               Boolean  @default(false)
+  foodReservation        String   @default("") @map("food_reservation")
+  remarks                String   @default("")
+  seededFoodReservation  String?  @map("seeded_food_reservation")
+  seededRemarks          String?  @map("seeded_remarks")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+  updatedByUserId        String?  @map("updated_by_user_id")
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@map("reservation_ops")
+}
+
+model SyncMeta {
+  id        String   @id @default("default")
+  syncedAt  DateTime @map("synced_at")
+  scanned   Int      @default(0)
+  skipped   Int      @default(0)
+  created   Int      @default(0)
+  updated   Int      @default(0)
+  seededOps Int      @default(0) @map("seeded_ops")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sync_meta")
+}
+
+model User {
+  id            String    @id
+  name          String
+  email         String
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
