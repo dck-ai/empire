@@ -24,6 +24,8 @@ import {
 const DATA_RANGE = "A1:Z";
 const UPSERT_CHUNK = 50;
 const SYNC_META_ID = "default";
+const SYNC_TX_TIMEOUT_MS = 60_000;
+const SYNC_TX_MAX_WAIT_MS = 10_000;
 
 type MirrorRow = {
   sheetRowId: number;
@@ -140,98 +142,104 @@ export async function applyParsedRows(
     return { deltas: [] };
   }
 
-  return prisma.$transaction(async (tx) => {
-    const sheetIds = parsed.map((r) => r.sheetRowId);
-    const existingRows = await tx.reservation.findMany({
-      where: { sheetRowId: { in: sheetIds } },
-      select: {
-        sheetRowId: true,
-        serviceDate: true,
-        serviceTime: true,
-        session: true,
-        mealPeriod: true,
-        hall: true,
-        customerName: true,
-        pax: true,
-        phone: true,
-        managerReview: true,
-      },
-    });
-    const existingBySheet = new Map(
-      existingRows.map((r) => [r.sheetRowId, r] as const)
-    );
-
-    const dateCounts = new Map<string, DeltaBucket>();
-    const dirty: ParsedSheetRow[] = [];
-
-    for (const row of parsed) {
-      const existing = existingBySheet.get(row.sheetRowId);
-      if (!existing) {
-        bump(dateCounts, row.serviceDateIso, "created");
-        dirty.push(row);
-      } else if (mirrorChanged(existing, row)) {
-        bump(dateCounts, row.serviceDateIso, "updated");
-        dirty.push(row);
-      }
-    }
-
-    for (let i = 0; i < dirty.length; i += UPSERT_CHUNK) {
-      const chunk = dirty.slice(i, i + UPSERT_CHUNK);
-      await Promise.all(
-        chunk.map((row) => {
-          const { sheetRowId, ...mirror } = reservationWriteData(row, now);
-          return tx.reservation.upsert({
-            where: { sheetRowId },
-            create: { sheetRowId, ...mirror },
-            update: mirror,
-          });
-        })
-      );
-    }
-
-    const reservations = await tx.reservation.findMany({
-      where: { sheetRowId: { in: sheetIds } },
-      select: { id: true, sheetRowId: true, ops: { select: { id: true } } },
-    });
-
-    const needingSeed = rowsNeedingOpsSeed(
-      parsed,
-      reservations.map((r) => ({
-        sheetRowId: r.sheetRowId,
-        hasOps: Boolean(r.ops),
-      }))
-    );
-
-    const bySheetId = new Map(
-      reservations.map((r) => [r.sheetRowId, r.id] as const)
-    );
-
-    const opsToCreate = needingSeed.flatMap((row) => {
-      const reservationId = bySheetId.get(row.sheetRowId);
-      if (!reservationId) return [];
-      bump(dateCounts, row.serviceDateIso, "seededOps");
-      return [
-        {
-          reservationId,
-          arrival: row.arrival,
-          finished: row.finished,
-          foodReservation: row.foodReservation,
-          remarks: row.remarks,
-          seededFoodReservation: row.foodReservation || null,
-          seededRemarks: row.remarks || null,
+  return prisma.$transaction(
+    async (tx) => {
+      const sheetIds = parsed.map((r) => r.sheetRowId);
+      const existingRows = await tx.reservation.findMany({
+        where: { sheetRowId: { in: sheetIds } },
+        select: {
+          sheetRowId: true,
+          serviceDate: true,
+          serviceTime: true,
+          session: true,
+          mealPeriod: true,
+          hall: true,
+          customerName: true,
+          pax: true,
+          phone: true,
+          managerReview: true,
         },
-      ];
-    });
-
-    if (opsToCreate.length > 0) {
-      await tx.reservationOps.createMany({
-        data: opsToCreate,
-        skipDuplicates: true,
       });
-    }
+      const existingBySheet = new Map(
+        existingRows.map((r) => [r.sheetRowId, r] as const)
+      );
 
-    return { deltas: toDeltas(dateCounts) };
-  });
+      const dateCounts = new Map<string, DeltaBucket>();
+      const dirty: ParsedSheetRow[] = [];
+
+      for (const row of parsed) {
+        const existing = existingBySheet.get(row.sheetRowId);
+        if (!existing) {
+          bump(dateCounts, row.serviceDateIso, "created");
+          dirty.push(row);
+        } else if (mirrorChanged(existing, row)) {
+          bump(dateCounts, row.serviceDateIso, "updated");
+          dirty.push(row);
+        }
+      }
+
+      for (let i = 0; i < dirty.length; i += UPSERT_CHUNK) {
+        const chunk = dirty.slice(i, i + UPSERT_CHUNK);
+        await Promise.all(
+          chunk.map((row) => {
+            const { sheetRowId, ...mirror } = reservationWriteData(row, now);
+            return tx.reservation.upsert({
+              where: { sheetRowId },
+              create: { sheetRowId, ...mirror },
+              update: mirror,
+            });
+          })
+        );
+      }
+
+      const reservations = await tx.reservation.findMany({
+        where: { sheetRowId: { in: sheetIds } },
+        select: { id: true, sheetRowId: true, ops: { select: { id: true } } },
+      });
+
+      const needingSeed = rowsNeedingOpsSeed(
+        parsed,
+        reservations.map((r) => ({
+          sheetRowId: r.sheetRowId,
+          hasOps: Boolean(r.ops),
+        }))
+      );
+
+      const bySheetId = new Map(
+        reservations.map((r) => [r.sheetRowId, r.id] as const)
+      );
+
+      const opsToCreate = needingSeed.flatMap((row) => {
+        const reservationId = bySheetId.get(row.sheetRowId);
+        if (!reservationId) return [];
+        bump(dateCounts, row.serviceDateIso, "seededOps");
+        return [
+          {
+            reservationId,
+            arrival: row.arrival,
+            finished: row.finished,
+            foodReservation: row.foodReservation,
+            remarks: row.remarks,
+            seededFoodReservation: row.foodReservation || null,
+            seededRemarks: row.remarks || null,
+          },
+        ];
+      });
+
+      if (opsToCreate.length > 0) {
+        await tx.reservationOps.createMany({
+          data: opsToCreate,
+          skipDuplicates: true,
+        });
+      }
+
+      return { deltas: toDeltas(dateCounts) };
+    },
+    {
+      maxWait: SYNC_TX_MAX_WAIT_MS,
+      timeout: SYNC_TX_TIMEOUT_MS,
+    }
+  );
 }
 
 export async function syncSheetsToDatabase(): Promise<SyncResult> {
