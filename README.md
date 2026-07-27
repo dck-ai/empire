@@ -15,7 +15,7 @@ Staff board for Empire Cuisine reservations.
 | `BETTER_AUTH_URL` | no | Default: `VERCEL_URL` or `http://localhost:3000` |
 | `GOOGLE_SHEET_ID` | sync | First tab of the spreadsheet |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | sync | SA key JSON — raw minified JSON, or base64 (recommended for `.env` / Vercel) |
-| `CRON_SECRET` | Vercel Cron | `openssl rand -hex 32`; Vercel sends Bearer automatically |
+| `CRON_SECRET` | scheduled sync | `openssl rand -hex 32`; Bearer secret for external callers of `GET /api/cron/sync-sheets` |
 | `SEED_USER_EMAIL` | seed | Staff login email |
 | `SEED_USER_PASSWORD` | seed | Min 8 chars |
 | `SEED_USER_NAME` | no | Default `Staff` |
@@ -58,7 +58,8 @@ npm run dev
 ```
 ## Deploy (Vercel)
 
-1. Managed Postgres + env from the table above.
+1. Managed Postgres + env from the table above (including `CRON_SECRET` if you use scheduled sync below).
 2. On release / schema change: `npm run db:push` (or `npx prisma db push`) against that DB.
 3. Seed once with `SEED_USER_*` then `npm run db:seed` against prod DB.
-4. Set `CRON_SECRET` if using `vercel.json` cron.
+
+This app does **not** use Vercel Cron Jobs or GitHub Actions for scheduling. Run the sync from an external cron (e.g. your VPS).

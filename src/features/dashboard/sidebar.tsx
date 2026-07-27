@@ -215,7 +215,7 @@ export function Sidebar({
             title={
               lastSyncAbsolute
                 ? `Last successful pull from Master Sheet: ${lastSyncAbsolute}`
-                : "No successful Master Sheet pull yet (Sync or cron)"
+                : "No successful Master Sheet pull yet (Sync or scheduled job)"
             }
           >
             {lastSyncLabel
